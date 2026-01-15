@@ -27,6 +27,26 @@ async def is_admin(message: Message):
     member = await bot.get_chat_member(message.chat.id, message.from_user.id)
     return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
 
+async def warn_and_cleanup_non_admin_command(message: Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return
+    try:
+        await message.delete()
+    except Exception:
+        logger.exception("Failed to delete command message: chat_id=%s", message.chat.id)
+    if message.from_user:
+        try:
+            await bot.send_message(
+                message.from_user.id,
+                "Iltimos, bu guruhda buyruqlar yubormang. Rahmat.",
+            )
+        except Exception:
+            logger.info(
+                "Failed to DM non-admin warning: chat_id=%s user_id=%s",
+                message.chat.id,
+                message.from_user.id,
+            )
+
 
 def is_allowed_chat(message: Message):
     return ALLOWED_CHAT_IDS is None or message.chat.id in ALLOWED_CHAT_IDS
@@ -116,11 +136,22 @@ async def send_stats(message: Message):
 
 @dp.message(Command("stats"))
 async def stats_command(message: Message):
+    if message.chat.type in ["group", "supergroup"] and not await is_admin(message):
+        await warn_and_cleanup_non_admin_command(message)
+        return
     await send_stats(message)
+    if message.chat.type in ["group", "supergroup"]:
+        try:
+            await message.delete()
+        except Exception:
+            logger.exception("Failed to delete command message: chat_id=%s", message.chat.id)
 
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
+    if message.chat.type in ["group", "supergroup"] and not await is_admin(message):
+        await warn_and_cleanup_non_admin_command(message)
+        return
     await message.reply(
         "Salom! Forward qilingan xabarni yuboring, men undagi ma'lumotlarni ko'rsataman. "
         "Agar forward ma'lumotlari chiqmasa, xabar himoyalangan bo'lishi yoki nusxa qilib yuborilgan bo'lishi mumkin."
@@ -235,7 +266,15 @@ async def forward_info(message: Message):
 
 @dp.message(Command("chat_id"))
 async def chat_id_command(message: Message):
+    if message.chat.type in ["group", "supergroup"] and not await is_admin(message):
+        await warn_and_cleanup_non_admin_command(message)
+        return
     await message.reply(f"Guruh ID: {message.chat.id}")
+    if message.chat.type in ["group", "supergroup"]:
+        try:
+            await message.delete()
+        except Exception:
+            logger.exception("Failed to delete command message: chat_id=%s", message.chat.id)
 
 
 if __name__ == "__main__":
