@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 
@@ -128,11 +129,11 @@ async def send_stats(message: Message):
             name = member.user.full_name
         except Exception:
             name = str(user_id)
-        text += f"{idx}) {name} — {count}\n"
+        safe_name = html.escape(name)
+        text += f'{idx}) <a href="tg://user?id={user_id}">{safe_name}</a> - {count}\n'
 
     logger.info("Stats sent: chat_id=%s rows=%d", message.chat.id, len(stats))
-    await message.reply(text)
-
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(Command("stats"))
 async def stats_command(message: Message):
@@ -149,8 +150,14 @@ async def stats_command(message: Message):
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
-    if message.chat.type in ["group", "supergroup"] and not await is_admin(message):
-        await warn_and_cleanup_non_admin_command(message)
+    if message.chat.type in ["group", "supergroup"]:
+        if not await is_admin(message):
+            await warn_and_cleanup_non_admin_command(message)
+            return
+        try:
+            await message.delete()
+        except Exception:
+            logger.exception("Failed to delete command message: chat_id=%s", message.chat.id)
         return
     await message.reply(
         "Salom! Forward qilingan xabarni yuboring, men undagi ma'lumotlarni ko'rsataman. "
@@ -266,15 +273,25 @@ async def forward_info(message: Message):
 
 @dp.message(Command("chat_id"))
 async def chat_id_command(message: Message):
-    if message.chat.type in ["group", "supergroup"] and not await is_admin(message):
-        await warn_and_cleanup_non_admin_command(message)
-        return
-    await message.reply(f"Guruh ID: {message.chat.id}")
     if message.chat.type in ["group", "supergroup"]:
+        if not await is_admin(message):
+            await warn_and_cleanup_non_admin_command(message)
+            return
         try:
             await message.delete()
         except Exception:
             logger.exception("Failed to delete command message: chat_id=%s", message.chat.id)
+        if message.from_user:
+            try:
+                await bot.send_message(message.from_user.id, f"Guruh ID: {message.chat.id}")
+            except Exception:
+                logger.info(
+                    "Failed to DM chat_id: chat_id=%s user_id=%s",
+                    message.chat.id,
+                    message.from_user.id,
+                )
+        return
+    await message.reply(f"Guruh ID: {message.chat.id}")
 
 
 if __name__ == "__main__":
