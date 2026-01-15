@@ -1,6 +1,7 @@
 import html
 import logging
 import re
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatMemberStatus
@@ -188,6 +189,54 @@ async def build_stats_text(chat_id: int):
         text += f'{idx}) <a href="tg://user?id={user_id}">{safe_name}</a> - {count}\n'
     return text
 
+
+def format_timestamp(value):
+    try:
+        dt = datetime.fromisoformat(value)
+        return dt.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        return value
+
+
+async def get_user_link(chat_id: int, user_id: int):
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        name = member.user.full_name
+    except Exception:
+        name = str(user_id)
+    safe_name = html.escape(name)
+    return f'<a href="tg://user?id={user_id}">{safe_name}</a>'
+
+
+async def format_event_line(chat_id: int, event):
+    created_at, event_type, actor_id, target_id, invite_creator_id, invite_link = event
+    time_text = format_timestamp(created_at)
+
+    actor = await get_user_link(chat_id, actor_id) if actor_id is not None else "noma'lum"
+    target = await get_user_link(chat_id, target_id) if target_id is not None else "noma'lum"
+
+    if event_type == "join_invite":
+        text = f"{time_text} {target} havola orqali qo'shildi (muallif {actor})"
+    elif event_type == "join_added":
+        text = f"{time_text} {actor} {target} ni qo'shdi"
+    elif event_type == "join_unknown":
+        text = f"{time_text} {target} qo'shildi (noma'lum)"
+    elif event_type == "leave_left":
+        text = f"{time_text} {target} chiqib ketdi"
+    elif event_type == "leave_removed":
+        text = f"{time_text} {actor} {target} ni o'chirdi"
+    elif event_type == "ban":
+        text = f"{time_text} {actor} {target} ni bandi"
+    elif event_type == "unban":
+        text = f"{time_text} {actor} {target} ni bandan chiqardi"
+    else:
+        text = f"{time_text} {event_type}"
+
+    if invite_link:
+        safe_link = html.escape(invite_link)
+        text += f' (<a href="{safe_link}">havola</a>)'
+    return text
+
 @dp.message(Command("stats"))
 async def stats_command(message: Message):
     if not is_allowed_chat_id(message.chat.id):
@@ -200,34 +249,11 @@ async def stats_command(message: Message):
             await message.delete()
         except Exception:
             logger.exception("Failed to delete command message: chat_id=%s", message.chat.id)
-        if message.from_user:
-            text = await build_stats_text(message.chat.id)
-            if not text:
-                try:
-                    await bot.send_message(
-                        message.from_user.id,
-                        "Hozircha taklif yoki qo'shish bo'yicha ma'lumot yo'q.",
-                    )
-                except Exception:
-                    logger.info(
-                        "Failed to DM empty stats: chat_id=%s user_id=%s",
-                        message.chat.id,
-                        message.from_user.id,
-                    )
-                return
-            try:
-                await bot.send_message(
-                    message.from_user.id,
-                    text,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                logger.info(
-                    "Failed to DM stats: chat_id=%s user_id=%s",
-                    message.chat.id,
-                    message.from_user.id,
-                )
+        text = await build_stats_text(message.chat.id)
+        if not text:
+            await message.answer("Hozircha taklif yoki qo'shish bo'yicha ma'lumot yo'q.")
+            return
+        await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
         return
 
     if not await is_admin(message):
@@ -324,19 +350,10 @@ async def history_command(message: Message):
         return
 
     lines = []
-    for created_at, event_type, actor_id, target_id, invite_creator_id, invite_link in events:
-        line = f"{created_at} {event_type}"
-        if actor_id is not None:
-            line += f" actor={actor_id}"
-        if target_id is not None:
-            line += f" target={target_id}"
-        if invite_creator_id is not None:
-            line += f" invite_creator={invite_creator_id}"
-        if invite_link:
-            line += f" link={invite_link}"
-        lines.append(line)
+    for event in events:
+        lines.append(await format_event_line(chat_id, event))
 
-    await message.reply("\n".join(lines))
+    await message.reply("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
 
 
 if __name__ == "__main__":
