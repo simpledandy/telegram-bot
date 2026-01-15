@@ -16,6 +16,7 @@ forward-info inspection for private chats.
 - `/start` (private only): onboarding message.
 - `/stats` (admin only): invite leaderboard. In groups, results are sent via DM.
 - `/chat_id` (admin only): sends group chat ID via DM when used in groups.
+- `/history` (admin only, DM): recent event history for a chat.
 
 ## Environment
 

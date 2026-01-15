@@ -84,3 +84,17 @@ def log_event(
     conn.commit()
 
 
+def get_recent_events(chat_id, limit=20):
+    cur.execute(
+        """
+        SELECT created_at, event_type, actor_id, target_id, invite_creator_id, invite_link
+        FROM invite_events
+        WHERE chat_id = ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (chat_id, limit),
+    )
+    return cur.fetchall()
+
+

@@ -29,6 +29,10 @@ async def is_admin(message: Message):
     member = await bot.get_chat_member(message.chat.id, message.from_user.id)
     return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
 
+async def is_admin_in_chat(user_id: int, chat_id: int):
+    member = await bot.get_chat_member(chat_id, user_id)
+    return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+
 async def warn_and_cleanup_non_admin_command(message: Message):
     if message.chat.type not in ["group", "supergroup"]:
         return
@@ -274,6 +278,65 @@ async def chat_id_command(message: Message):
                 )
         return
     await message.reply(f"Guruh ID: {message.chat.id}")
+
+
+@dp.message(Command("history"))
+async def history_command(message: Message):
+    if message.chat.type != "private":
+        return
+    if not message.from_user:
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.reply("Foydalanish: /history <chat_id> [limit]")
+        return
+
+    try:
+        chat_id = int(parts[1])
+    except ValueError:
+        await message.reply("Chat ID noto'g'ri. Masalan: /history -1001234567890 20")
+        return
+
+    limit = 20
+    if len(parts) >= 3:
+        try:
+            limit = max(1, min(200, int(parts[2])))
+        except ValueError:
+            await message.reply("Limit son bo'lishi kerak. Masalan: /history -1001234567890 20")
+            return
+
+    if not is_allowed_chat_id(chat_id):
+        await message.reply("Bu chat ruxsat etilmagan.")
+        return
+
+    try:
+        if not await is_admin_in_chat(message.from_user.id, chat_id):
+            await message.reply("Bu buyruq faqat adminlar uchun.")
+            return
+    except Exception:
+        await message.reply("Chat topilmadi yoki botda ruxsat yo'q.")
+        return
+
+    events = db.get_recent_events(chat_id, limit=limit)
+    if not events:
+        await message.reply("Hozircha tarix mavjud emas.")
+        return
+
+    lines = []
+    for created_at, event_type, actor_id, target_id, invite_creator_id, invite_link in events:
+        line = f"{created_at} {event_type}"
+        if actor_id is not None:
+            line += f" actor={actor_id}"
+        if target_id is not None:
+            line += f" target={target_id}"
+        if invite_creator_id is not None:
+            line += f" invite_creator={invite_creator_id}"
+        if invite_link:
+            line += f" link={invite_link}"
+        lines.append(line)
+
+    await message.reply("\n".join(lines))
 
 
 if __name__ == "__main__":
