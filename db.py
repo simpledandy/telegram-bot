@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime
 from config import DB_PATH
 
 conn = sqlite3.connect(DB_PATH)
@@ -10,6 +11,19 @@ CREATE TABLE IF NOT EXISTS invites (
     chat_id INTEGER,
     count INTEGER DEFAULT 0,
     PRIMARY KEY (user_id, chat_id)
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS invite_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    actor_id INTEGER,
+    target_id INTEGER,
+    invite_creator_id INTEGER,
+    invite_link TEXT,
+    created_at TEXT NOT NULL
 )
 """)
 
@@ -33,5 +47,40 @@ def get_invite_stats(chat_id):
     ORDER BY count DESC
     """, (chat_id,))
     return cur.fetchall()
+
+
+def log_event(
+    *,
+    chat_id,
+    event_type,
+    actor_id=None,
+    target_id=None,
+    invite_creator_id=None,
+    invite_link=None,
+):
+    cur.execute(
+        """
+        INSERT INTO invite_events (
+            chat_id,
+            event_type,
+            actor_id,
+            target_id,
+            invite_creator_id,
+            invite_link,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            chat_id,
+            event_type,
+            actor_id,
+            target_id,
+            invite_creator_id,
+            invite_link,
+            datetime.utcnow().isoformat(),
+        ),
+    )
+    conn.commit()
 
 

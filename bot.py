@@ -8,6 +8,7 @@ from aiogram.types import Message
 from aiogram.filters import Command
 
 from config import BOT_TOKEN, ALLOWED_CHAT_IDS
+from forward_info import register_forward_handlers
 import db
 
 bot = Bot(BOT_TOKEN)
@@ -49,37 +50,99 @@ async def warn_and_cleanup_non_admin_command(message: Message):
             )
 
 
-def is_allowed_chat(message: Message):
-    return ALLOWED_CHAT_IDS is None or message.chat.id in ALLOWED_CHAT_IDS
+def is_allowed_chat_id(chat_id: int):
+    return ALLOWED_CHAT_IDS is None or chat_id in ALLOWED_CHAT_IDS
 
 
 # 1. Clean join / leave
 @dp.message(F.new_chat_members)
 async def on_user_join(message: Message):
-    if not is_allowed_chat(message):
+    if not is_allowed_chat_id(message.chat.id):
         return
     for user in message.new_chat_members:
         invite = getattr(message, "invite_link", None)
         if invite and invite.creator:
             db.increment_invite(invite.creator.id, message.chat.id)
+            db.log_event(
+                chat_id=message.chat.id,
+                event_type="join_invite",
+                actor_id=invite.creator.id,
+                target_id=user.id,
+                invite_creator_id=invite.creator.id,
+                invite_link=getattr(invite, "invite_link", None),
+            )
             continue
         adder = message.from_user
         if adder and adder.id != user.id:
             db.increment_invite(adder.id, message.chat.id)
+            db.log_event(
+                chat_id=message.chat.id,
+                event_type="join_added",
+                actor_id=adder.id,
+                target_id=user.id,
+            )
         else:
             logger.info(
                 "Join without invite/adder: chat_id=%s user_id=%s",
                 message.chat.id,
                 user.id,
             )
+            db.log_event(
+                chat_id=message.chat.id,
+                event_type="join_unknown",
+                target_id=user.id,
+            )
     await message.delete()
 
 
 @dp.message(F.left_chat_member)
 async def on_user_leave(message: Message):
-    if not is_allowed_chat(message):
+    if not is_allowed_chat_id(message.chat.id):
         return
+    left = message.left_chat_member
+    actor_id = message.from_user.id if message.from_user else None
+    target_id = left.id if left else None
+    if left and message.from_user and message.from_user.id != left.id:
+        event_type = "leave_removed"
+    else:
+        event_type = "leave_left"
+        actor_id = target_id
+    db.log_event(
+        chat_id=message.chat.id,
+        event_type=event_type,
+        actor_id=actor_id,
+        target_id=target_id,
+    )
     await message.delete()
+
+
+@dp.chat_member()
+async def on_chat_member_update(event):
+    if not is_allowed_chat_id(event.chat.id):
+        return
+    if not event.old_chat_member or not event.new_chat_member:
+        return
+    old_status = event.old_chat_member.status
+    new_status = event.new_chat_member.status
+    target_id = event.new_chat_member.user.id
+    actor_id = event.from_user.id if event.from_user else None
+
+    if new_status == ChatMemberStatus.KICKED:
+        db.log_event(
+            chat_id=event.chat.id,
+            event_type="ban",
+            actor_id=actor_id,
+            target_id=target_id,
+        )
+        return
+
+    if old_status == ChatMemberStatus.KICKED and new_status != ChatMemberStatus.KICKED:
+        db.log_event(
+            chat_id=event.chat.id,
+            event_type="unban",
+            actor_id=actor_id,
+            target_id=target_id,
+        )
 
 
 # 2. Anti-link (group/supergroup only)
@@ -88,9 +151,7 @@ async def on_user_leave(message: Message):
     & ((F.text & ~F.text.startswith("/")) | (F.caption & ~F.caption.startswith("/")))
 )
 async def anti_link_and_ads(message: Message):
-    if (message.forward_origin or message.forward_from_chat) and message.chat.type == "private":
-        return
-    if not is_allowed_chat(message):
+    if not is_allowed_chat_id(message.chat.id):
         return
     if await is_admin(message):
         return
@@ -102,50 +163,77 @@ async def anti_link_and_ads(message: Message):
 
 
 # 3. Stats command
-async def send_stats(message: Message):
-    if not is_allowed_chat(message):
-        return
-    logger.info(
-        "Stats request: chat_id=%s from_user=%s sender_chat=%s text=%r",
-        message.chat.id,
-        message.from_user.id if message.from_user else None,
-        message.sender_chat.id if message.sender_chat else None,
-        message.text,
-    )
-    if not await is_admin(message):
-        logger.info("Stats denied (not admin): chat_id=%s", message.chat.id)
-        return
-
-    stats = db.get_invite_stats(message.chat.id)
+async def build_stats_text(chat_id: int):
+    stats = db.get_invite_stats(chat_id)
     if not stats:
-        logger.info("Stats empty: chat_id=%s", message.chat.id)
-        await message.reply("Hozircha taklif yoki qo'shish bo'yicha ma'lumot yo'q.")
-        return
+        logger.info("Stats empty: chat_id=%s", chat_id)
+        return None
 
-    text = "Taklif va qo'shish reytingi:\n"
-    for idx, (user_id, count) in enumerate(stats, start=1):
+    parts = []
+    for user_id, count in stats:
         try:
-            member = await bot.get_chat_member(message.chat.id, user_id)
+            member = await bot.get_chat_member(chat_id, user_id)
             name = member.user.full_name
         except Exception:
             name = str(user_id)
+        parts.append((user_id, count, name))
+
+    text = "Taklif va qo'shish reytingi:\n"
+    for idx, (user_id, count, name) in enumerate(parts, start=1):
         safe_name = html.escape(name)
         text += f'{idx}) <a href="tg://user?id={user_id}">{safe_name}</a> - {count}\n'
-
-    logger.info("Stats sent: chat_id=%s rows=%d", message.chat.id, len(stats))
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    return text
 
 @dp.message(Command("stats"))
 async def stats_command(message: Message):
-    if message.chat.type in ["group", "supergroup"] and not await is_admin(message):
-        await warn_and_cleanup_non_admin_command(message)
+    if not is_allowed_chat_id(message.chat.id):
         return
-    await send_stats(message)
     if message.chat.type in ["group", "supergroup"]:
+        if not await is_admin(message):
+            await warn_and_cleanup_non_admin_command(message)
+            return
         try:
             await message.delete()
         except Exception:
             logger.exception("Failed to delete command message: chat_id=%s", message.chat.id)
+        if message.from_user:
+            text = await build_stats_text(message.chat.id)
+            if not text:
+                try:
+                    await bot.send_message(
+                        message.from_user.id,
+                        "Hozircha taklif yoki qo'shish bo'yicha ma'lumot yo'q.",
+                    )
+                except Exception:
+                    logger.info(
+                        "Failed to DM empty stats: chat_id=%s user_id=%s",
+                        message.chat.id,
+                        message.from_user.id,
+                    )
+                return
+            try:
+                await bot.send_message(
+                    message.from_user.id,
+                    text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                logger.info(
+                    "Failed to DM stats: chat_id=%s user_id=%s",
+                    message.chat.id,
+                    message.from_user.id,
+                )
+        return
+
+    if not await is_admin(message):
+        logger.info("Stats denied (not admin): chat_id=%s", message.chat.id)
+        return
+    text = await build_stats_text(message.chat.id)
+    if not text:
+        await message.reply("Hozircha taklif yoki qo'shish bo'yicha ma'lumot yo'q.")
+        return
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message(Command("start"))
@@ -163,112 +251,6 @@ async def start_command(message: Message):
         "Salom! Forward qilingan xabarni yuboring, men undagi ma'lumotlarni ko'rsataman. "
         "Agar forward ma'lumotlari chiqmasa, xabar himoyalangan bo'lishi yoki nusxa qilib yuborilgan bo'lishi mumkin."
     )
-
-
-@dp.message(
-    F.forward_origin
-    | F.forward_from_chat
-    | F.forward_from
-    | F.forward_sender_name
-    | F.forward_date
-)
-async def forward_info(message: Message):
-    if message.chat.type != "private" and not is_allowed_chat(message):
-        return
-
-    logger.info(
-        "Forward handler: chat_id=%s type=%s has_origin=%s has_from_chat=%s has_from=%s has_sender_name=%s has_date=%s",
-        message.chat.id,
-        message.chat.type,
-        bool(getattr(message, "forward_origin", None)),
-        bool(getattr(message, "forward_from_chat", None)),
-        bool(getattr(message, "forward_from", None)),
-        bool(getattr(message, "forward_sender_name", None)),
-        bool(getattr(message, "forward_date", None)),
-    )
-
-    parts = ["Yuborilgan xabar ma'lumotlari:"]
-
-    origin = getattr(message, "forward_origin", None)
-    if origin:
-        origin_type = getattr(origin, "type", None)
-        parts.append(f"Manba turi: {origin_type}")
-
-        origin_sender = getattr(origin, "sender_user", None)
-        if origin_sender:
-            parts.append(f"Manba foydalanuvchi ID: {origin_sender.id}")
-            parts.append(f"Manba ism: {origin_sender.full_name}")
-
-        origin_chat = getattr(origin, "sender_chat", None)
-        if origin_chat:
-            parts.append(f"Manba chat ID: {origin_chat.id}")
-            if origin_chat.title:
-                parts.append(f"Manba chat nomi: {origin_chat.title}")
-            if origin_chat.username:
-                parts.append(f"Manba chat username: @{origin_chat.username}")
-
-        origin_name = getattr(origin, "sender_user_name", None)
-        if origin_name:
-            parts.append(f"Manba ko'rsatilgan ism: {origin_name}")
-
-    fchat = getattr(message, "forward_from_chat", None)
-    if fchat:
-        parts.append(f"Forward chat ID: {fchat.id}")
-        if fchat.title:
-            parts.append(f"Forward chat nomi: {fchat.title}")
-        if fchat.username:
-            parts.append(f"Forward chat username: @{fchat.username}")
-
-    fuser = getattr(message, "forward_from", None)
-    if fuser:
-        parts.append(f"Forward foydalanuvchi ID: {fuser.id}")
-        parts.append(f"Forward ism: {fuser.full_name}")
-
-    fdate = getattr(message, "forward_date", None)
-    if fdate:
-        parts.append(f"Forward vaqti (UTC): {fdate.isoformat()}")
-
-    fmsg_id = getattr(message, "forward_from_message_id", None)
-    if fmsg_id:
-        parts.append(f"Forward xabar ID: {fmsg_id}")
-
-    fsender_name = getattr(message, "forward_sender_name", None)
-    if fsender_name:
-        parts.append(f"Forward yuboruvchi ismi: {fsender_name}")
-
-    fsignature = getattr(message, "forward_signature", None)
-    if fsignature:
-        parts.append(f"Forward imzo: {fsignature}")
-
-    parts.append(f"Joriy chat ID: {message.chat.id}")
-    if len(parts) == 2 and message.chat.type == "private":
-        try:
-            await message.reply(
-                "Forward ma'lumotlari topilmadi. "
-                "Ehtimol, xabar himoyalangan yoki oddiy nusxa sifatida yuborilgan. "
-                "Iltimos, xabarni aynan forward qilib yuboring."
-            )
-        except Exception:
-            logger.exception(
-                "Forward reply failed: chat_id=%s from_user=%s",
-                message.chat.id,
-                message.from_user.id if message.from_user else None,
-            )
-        logger.info(
-            "Forward info missing: chat_id=%s from_user=%s",
-            message.chat.id,
-            message.from_user.id if message.from_user else None,
-        )
-        return
-
-    try:
-        await message.reply("\n".join(parts))
-    except Exception:
-        logger.exception(
-            "Forward reply failed: chat_id=%s from_user=%s",
-            message.chat.id,
-            message.from_user.id if message.from_user else None,
-        )
 
 
 @dp.message(Command("chat_id"))
@@ -295,4 +277,9 @@ async def chat_id_command(message: Message):
 
 
 if __name__ == "__main__":
+    register_forward_handlers(
+        dp=dp,
+        is_allowed_chat_id=is_allowed_chat_id,
+        logger=logger,
+    )
     dp.run_polling(bot)
