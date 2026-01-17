@@ -1,7 +1,6 @@
 # Ladybot
 
-Telegram group manager bot with invite tracking, anti-link moderation, and
-forward-info inspection for private chats.
+Telegram group manager bot with invite tracking and anti-link moderation.
 
 ## Features
 
@@ -9,7 +8,6 @@ forward-info inspection for private chats.
 - Per-event history logging (join/leave, invite, ban/unban).
 - Anti-link moderation for non-admins.
 - Admin-only commands in groups with private DM responses.
-- Forwarded-message inspection in private chats.
 
 ## Commands
 

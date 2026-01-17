@@ -1,7 +1,7 @@
 import html
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatMemberStatus
@@ -9,7 +9,6 @@ from aiogram.types import Message
 from aiogram.filters import Command
 
 from config import BOT_TOKEN, ALLOWED_CHAT_IDS
-from forward_info import register_forward_handlers
 import db
 
 bot = Bot(BOT_TOKEN)
@@ -193,7 +192,10 @@ async def build_stats_text(chat_id: int):
 def format_timestamp(value):
     try:
         dt = datetime.fromisoformat(value)
-        return dt.strftime("%Y-%m-%d %H:%M UTC")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        local_dt = dt.astimezone()
+        return local_dt.strftime("%Y-%m-%d %H:%M")
     except Exception:
         return value
 
@@ -224,11 +226,11 @@ async def format_event_line(chat_id: int, event):
     elif event_type == "leave_left":
         text = f"{time_text} {target} chiqib ketdi"
     elif event_type == "leave_removed":
-        text = f"{time_text} {actor} {target} ni o'chirdi"
+        text = f"{time_text} {actor} {target} ni chiqardi"
     elif event_type == "ban":
-        text = f"{time_text} {actor} {target} ni bandi"
+        text = f"{time_text} {actor} {target} ni taqiqladi"
     elif event_type == "unban":
-        text = f"{time_text} {actor} {target} ni bandan chiqardi"
+        text = f"{time_text} {actor} {target} ni taqiqdan chiqardi"
     else:
         text = f"{time_text} {event_type}"
 
@@ -277,10 +279,7 @@ async def start_command(message: Message):
         except Exception:
             logger.exception("Failed to delete command message: chat_id=%s", message.chat.id)
         return
-    await message.reply(
-        "Salom! Forward qilingan xabarni yuboring, men undagi ma'lumotlarni ko'rsataman. "
-        "Agar forward ma'lumotlari chiqmasa, xabar himoyalangan bo'lishi yoki nusxa qilib yuborilgan bo'lishi mumkin."
-    )
+    await message.reply("Salom! Botga xush kelibsiz.")
 
 
 @dp.message(Command("chat_id"))
@@ -357,9 +356,4 @@ async def history_command(message: Message):
 
 
 if __name__ == "__main__":
-    register_forward_handlers(
-        dp=dp,
-        is_allowed_chat_id=is_allowed_chat_id,
-        logger=logger,
-    )
     dp.run_polling(bot)
