@@ -11,11 +11,8 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 
-@app.get("/api/health")
-async def health() -> dict[str, bool]:
-    return {"ok": True}
-
-
+@app.post("/")
+@app.post("")
 @app.post("/api/webhook")
 async def telegram_webhook(
     request: Request,
@@ -39,4 +36,11 @@ async def root() -> dict[str, str]:
     return {
         "service": "ladybot-webhook",
         "webhook": f"{APP_BASE_URL}/api/webhook" if APP_BASE_URL else "/api/webhook",
+    }
+
+
+@app.get("/health")
+async def health() -> dict[str, bool]:
+    return {
+        "ok": True,
     }
