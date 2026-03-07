@@ -15,12 +15,11 @@ Telegram group manager bot with invite tracking and anti-link moderation.
 - `/stats` (admin only): invite leaderboard. In groups, results are sent via DM.
 - `/chat_id` (admin only): sends group chat ID via DM when used in groups.
 - `/history` (admin only, DM): recent event history for a chat.
+- `/help` (DM): command reference for admins.
 
 ## Environment
 
 - `BOT_TOKEN` (required): Telegram bot token.
-- `ALLOWED_CHAT_IDS` (optional): comma-separated list of allowed chat IDs.
-  Example: `-1003577925363,-1002200706225`
 - `DB_PATH` (optional): SQLite path, default `bot.db`.
 
 ## Local setup
@@ -70,4 +69,4 @@ Columns:
 ## Notes
 
 - Admin DMs only work after the admin has started the bot in private at least once.
-- If `ALLOWED_CHAT_IDS` is set, the bot ignores all other chats.
+- History timestamps are stored in UTC and currently displayed with a fixed +5 hour offset in code.
