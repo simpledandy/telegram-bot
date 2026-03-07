@@ -12,8 +12,6 @@ app = FastAPI()
 
 
 @app.post("/")
-@app.post("")
-@app.post("/api/webhook")
 async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str | None = Header(default=None, alias="X-Telegram-Bot-Api-Secret-Token"),
@@ -31,16 +29,11 @@ async def telegram_webhook(
     return {"ok": True}
 
 
-@app.get("/")
-async def root() -> dict[str, str]:
-    return {
-        "service": "ladybot-webhook",
-        "webhook": f"{APP_BASE_URL}/api/webhook" if APP_BASE_URL else "/api/webhook",
-    }
-
-
 @app.get("/health")
-async def health() -> dict[str, bool]:
+@app.get("/")
+async def health_api_webhook() -> dict[str, str | bool]:
     return {
         "ok": True,
+        "service": "ladybot-webhook",
+        "webhook": f"{APP_BASE_URL}/api/webhook" if APP_BASE_URL else "/api/webhook",
     }
